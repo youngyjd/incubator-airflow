@@ -364,6 +364,11 @@ def get_date_time_num_runs_dag_runs_form_data(request, session, dag):
     }
 
 class Airflow(BaseView):
+    def __init__(self, *args, **kwargs):
+        super(Airflow, self).__init__(*args, **kwargs)
+        # tuples stored in this variable will logged into the extra field of the Log table
+        self.customized_log_extra = []
+
     def is_visible(self):
         return False
 
@@ -1034,6 +1039,7 @@ class Airflow(BaseView):
         flash(
             "Sent {} to the message queue, "
             "it should start any moment now.".format(ti))
+        self.customized_log_extra = [('ui_action', 'run task instance')]
         return redirect(origin)
 
     @expose('/delete')
@@ -1096,6 +1102,7 @@ class Airflow(BaseView):
         flash(
             "Triggered {}, "
             "it should start any moment now.".format(dag_id))
+        self.customized_log_extra = [('run_id', run_id), ('ui_action', 'trigger dag run')]
         return redirect(origin)
 
     def _clear_dag_tis(self, dag, start_date, end_date, origin,
@@ -1155,6 +1162,8 @@ class Airflow(BaseView):
         end_date = execution_date if not future else None
         start_date = execution_date if not past else None
 
+        if confirmed:
+            self.customized_log_extra = [('ui_action', 'clear task instance')]
         return self._clear_dag_tis(dag, start_date, end_date, origin,
                                    recursive=recursive, confirmed=confirmed)
 
@@ -1174,6 +1183,8 @@ class Airflow(BaseView):
         start_date = execution_date
         end_date = execution_date
 
+        if confirmed:
+            self.customized_log_extra = [('ui_action', 'clear dag run')]
         return self._clear_dag_tis(dag, start_date, end_date, origin,
                                    recursive=True, confirmed=confirmed)
 
@@ -1245,6 +1256,7 @@ class Airflow(BaseView):
 
         if confirmed:
             flash('Marked success on {} task instances'.format(len(new_dag_state)))
+            self.customized_log_extra = [('ui_action', 'mark dag run success')]
             return redirect(origin)
 
         else:
@@ -1306,7 +1318,12 @@ class Airflow(BaseView):
                                 future=future, past=past, state=state,
                                 commit=True)
 
+<<<<<<< HEAD
             flash("Marked {} on {} task instances".format(state, len(altered)))
+=======
+            flash("Marked success on {} task instances".format(len(altered)))
+            self.customized_log_extra = [('ui_action', 'mark task instance success')]
+>>>>>>> example push for auditing
             return redirect(origin)
 
         to_be_altered = set_state(task=task, execution_date=execution_date,
@@ -1855,6 +1872,9 @@ class Airflow(BaseView):
         session.merge(orm_dag)
         session.commit()
 
+        # example use of self.customized_log_extra
+        ui_action = 'turn off dag' if orm_dag.is_paused else 'turn on dag'
+        self.customized_log_extra = [('ui_action', '{}'.format(ui_action))]
         dagbag.get_dag(dag_id)
         return "OK"
 
@@ -1875,6 +1895,7 @@ class Airflow(BaseView):
 
         dagbag.get_dag(dag_id)
         flash("DAG [{}] is now fresh as a daisy".format(dag_id))
+        self.customized_log_extra = [('ui_action', 'refresh dag model')]
         return redirect(request.referrer)
 
     @expose('/refresh_all')
@@ -1883,6 +1904,7 @@ class Airflow(BaseView):
     def refresh_all(self):
         dagbag.collect_dags(only_if_updated=False)
         flash("All DAGs are now up to date")
+        self.customized_log_extra = [('ui_action', 'refresh all dag models')]
         return redirect('/')
 
     @expose('/gantt')
@@ -2239,6 +2261,26 @@ class AirflowModelView(ModelView):
     create_template = 'airflow/model_create.html'
     column_display_actions = True
     page_size = PAGE_SIZE
+
+    @expose('/new/', methods=('GET', 'POST'))
+    @wwwutils.action_logging
+    def create_view(self):
+        return super(AirflowModelView, self).create_view()
+
+    @expose('/edit/', methods=('GET', 'POST'))
+    @wwwutils.action_logging
+    def edit_view(self):
+        return super(AirflowModelView, self).edit_view()
+
+    @expose('/delete/', methods=('POST',))
+    @wwwutils.action_logging
+    def delete_view(self):
+        return super(AirflowModelView, self).delete_view()
+
+    @expose('/action/', methods=('POST',))
+    @wwwutils.action_logging
+    def action_view(self):
+        return super(AirflowModelView, self).action_view()
 
 
 class ModelViewOnly(wwwutils.LoginMixin, AirflowModelView):
@@ -2644,6 +2686,11 @@ class DagRunModelView(ModelViewOnly):
         run_id=dag_run_link
     )
 
+    def __init__(self, *args, **kwargs):
+        super(DagRunModelView, self).__init__(*args, **kwargs)
+        # tuples stored in this variable will logged into the extra field of the Log table
+        self.customized_log_extra = []
+
     @action('new_delete', "Delete", "Are you sure you want to delete selected records?")
     @provide_session
     def action_new_delete(self, ids, session=None):
@@ -2655,9 +2702,14 @@ class DagRunModelView(ModelViewOnly):
             .delete(synchronize_session='fetch')
         session.commit()
         dirty_ids = []
+        log_drs = []
         for row in deleted:
             dirty_ids.append(row.dag_id)
+            log_drs.append((('dag_id', row.dag_id),
+                            ('execution_date', row.execution_date.isoformat() if row.execution_date else None)))
         models.DagStat.update(dirty_ids, dirty_only=False, session=session)
+        self.customized_log_extra.extend([('dag_run', log_drs),
+                                          ('ui_action', 'delete dag run')])
 
     @action('set_running', "Set state to 'running'", None)
     @provide_session
@@ -2715,8 +2767,11 @@ class DagRunModelView(ModelViewOnly):
             count = 0
             dirty_ids = []
             altered_tis = []
+            log_drs = []
             for dr in session.query(DR).filter(DR.id.in_(ids)).all():
                 dirty_ids.append(dr.dag_id)
+                log_drs.append((('dag_id', dr.dag_id),
+                                ('execution_date', dr.execution_date.isoformat() if dr.execution_date else None)))
                 count += 1
                 altered_tis += \
                     set_dag_run_state_to_success(dagbag.get_dag(dr.dag_id),
@@ -2728,6 +2783,9 @@ class DagRunModelView(ModelViewOnly):
             flash(
                 "{count} dag runs and {altered_ti_count} task instances "
                 "were set to success".format(**locals()))
+            self.customized_log_extra.extend([('dag_run', log_drs),
+                                              ('target_state', target_state),
+                                              ('ui_action', 'set dag run state')])
         except Exception as ex:
             if not self.handle_view_exception(ex):
                 raise Exception("Ooops")
@@ -2809,6 +2867,11 @@ class TaskInstanceModelView(ModelViewOnly):
         'pool', 'log_url')
     page_size = PAGE_SIZE
 
+    def __init__(self, *args, **kwargs):
+        super(TaskInstanceModelView, self).__init__(*args, **kwargs)
+        # tuples stored in this variable will logged into the extra field of the Log table
+        self.customized_log_extra = []
+
     @action('set_running', "Set state to 'running'", None)
     def action_set_running(self, ids):
         self.set_task_instance_state(ids, State.RUNNING)
@@ -2835,6 +2898,7 @@ class TaskInstanceModelView(ModelViewOnly):
         try:
             TI = models.TaskInstance
 
+            log_tis = []
             dag_to_task_details = {}
             dag_to_tis = {}
 
@@ -2844,6 +2908,9 @@ class TaskInstanceModelView(ModelViewOnly):
                 dag = dagbag.get_dag(dag_id)
                 task_details = dag_to_task_details.setdefault(dag, [])
                 task_details.append((task_id, execution_date))
+                log_tis.append((('task_id', task_id),
+                                ('dag_id', dag_id),
+                                ('execution_date', execution_date.isoformat() if execution_date else None)))
 
             for dag, task_details in dag_to_task_details.items():
                 for task_id, execution_date in task_details:
@@ -2862,7 +2929,8 @@ class TaskInstanceModelView(ModelViewOnly):
             session.commit()
 
             flash("{0} task instances have been cleared".format(len(ids)))
-
+            self.customized_log_extra.extend([('task_instance', log_tis),
+                                              ('ui_action', 'delete task instance')])
         except Exception as ex:
             if not self.handle_view_exception(ex):
                 raise Exception("Ooops")
@@ -2871,6 +2939,7 @@ class TaskInstanceModelView(ModelViewOnly):
     @provide_session
     def set_task_instance_state(self, ids, target_state, session=None):
         try:
+            log_tis = []
             TI = models.TaskInstance
             count = len(ids)
             for id in ids:
@@ -2881,9 +2950,15 @@ class TaskInstanceModelView(ModelViewOnly):
                                               TI.dag_id == dag_id,
                                               TI.execution_date == execution_date).one()
                 ti.state = target_state
+                log_tis.append((('task_id', task_id),
+                                ('dag_id', dag_id),
+                                ('execution_date', execution_date.isoformat() if execution_date else None)))
             session.commit()
             flash(
                 "{count} task instances were set to '{target_state}'".format(**locals()))
+            self.customized_log_extra.extend([('task_instance', log_tis),
+                                              ('target_state', target_state),
+                                              ('ui_action', 'set task instance state')])
         except Exception as ex:
             if not self.handle_view_exception(ex):
                 raise Exception("Ooops")

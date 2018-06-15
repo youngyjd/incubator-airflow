@@ -24,6 +24,7 @@ from builtins import object
 
 from cgi import escape
 from io import BytesIO as IO
+import collections
 import functools
 import gzip
 import json
@@ -245,31 +246,63 @@ def action_logging(f):
     Decorator to log user actions
     """
     @functools.wraps(f)
-    def wrapper(*args, **kwargs):
+    def wrapper(self, *args, **kwargs):
+        customized_log_extra = []
+        exception_raised = False
+        try:
+            func = f(self, *args, **kwargs)
+            if hasattr(self, "customized_log_extra") and isinstance(self.customized_log_extra, (list,)):
+                customized_log_extra = self.customized_log_extra
+        except Exception as e:
+            exception_raised = True
+
         # AnonymousUserMixin() has user attribute but its value is None.
         if current_user and hasattr(current_user, 'user') and current_user.user:
             user = current_user.user.username
         else:
             user = 'anonymous'
 
+        if request.method == 'POST':
+            print list(request.form.items())
+
+        request_args = request.args.to_dict(flat=False)
+        if request.method == 'POST':
+            request_args.update(request.form.to_dict(flat=False))
+        extra = list(request_args.items())
+        extra.extend(customized_log_extra)
+        extra = convert(extra)
         log = models.Log(
             event=f.__name__,
             task_instance=None,
             owner=user,
-            extra=str(list(request.args.items())),
-            task_id=request.args.get('task_id'),
-            dag_id=request.args.get('dag_id'))
+            extra=str(extra),
+            task_id=request_args.get('task_id'),
+            dag_id=request_args.get('dag_id'))
 
-        if request.args.get('execution_date'):
-            log.execution_date = timezone.parse(request.args.get('execution_date'))
+        if request_args.get('execution_date'):
+            log.execution_date = timezone.parse(request_args.get('execution_date'))
 
         with create_session() as session:
             session.add(log)
             session.commit()
 
-        return f(*args, **kwargs)
+        if exception_raised:
+            raise e
+
+        return func
 
     return wrapper
+
+
+def convert(data):
+    if isinstance(data, basestring):
+        return str(data)
+    elif isinstance(data, collections.Mapping):
+        return dict(map(convert, data.iteritems()))
+    elif isinstance(data, collections.Iterable):
+        return type(data)(map(convert, data))
+    else:
+        return data
 
 
 def notify_owner(f):
