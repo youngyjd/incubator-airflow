@@ -1318,12 +1318,8 @@ class Airflow(BaseView):
                                 future=future, past=past, state=state,
                                 commit=True)
 
-<<<<<<< HEAD
             flash("Marked {} on {} task instances".format(state, len(altered)))
-=======
-            flash("Marked success on {} task instances".format(len(altered)))
             self.customized_log_extra = [('ui_action', 'mark task instance success')]
->>>>>>> example push for auditing
             return redirect(origin)
 
         to_be_altered = set_state(task=task, execution_date=execution_date,
