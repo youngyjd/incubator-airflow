@@ -265,7 +265,7 @@ def action_logging(f):
         if request.method == 'POST':
             print list(request.form.items())
 
-        request_args = request.args.to_dict(flat=False)
+        request_args = request.args.to_dict(flat=True)
         if request.method == 'POST':
             request_args.update(request.form.to_dict(flat=False))
         extra = list(request_args.items())

@@ -2714,14 +2714,20 @@ class DagRunModelView(ModelViewOnly):
             DR = models.DagRun
             count = 0
             dirty_ids = []
+            log_drs = []
             for dr in session.query(DR).filter(DR.id.in_(ids)).all():
                 dirty_ids.append(dr.dag_id)
+                log_drs.append((('dag_id', dr.dag_id),
+                                ('execution_date', dr.execution_date.isoformat() if dr.execution_date else None)))
                 count += 1
                 dr.state = State.RUNNING
                 dr.start_date = timezone.utcnow()
             models.DagStat.update(dirty_ids, session=session)
             flash(
                 "{count} dag runs were set to running".format(**locals()))
+            self.customized_log_extra.extend([('dag_run', log_drs),
+                                              ('target_state', 'running'),
+                                              ('ui_action', 'set dag run state')])
         except Exception as ex:
             if not self.handle_view_exception(ex):
                 raise Exception("Ooops")
@@ -2736,8 +2742,11 @@ class DagRunModelView(ModelViewOnly):
             count = 0
             dirty_ids = []
             altered_tis = []
+            log_drs = []
             for dr in session.query(DR).filter(DR.id.in_(ids)).all():
                 dirty_ids.append(dr.dag_id)
+                log_drs.append((('dag_id', dr.dag_id),
+                                ('execution_date', dr.execution_date.isoformat() if dr.execution_date else None)))
                 count += 1
                 altered_tis += \
                     set_dag_run_state_to_failed(dagbag.get_dag(dr.dag_id),
@@ -2749,6 +2758,9 @@ class DagRunModelView(ModelViewOnly):
             flash(
                 "{count} dag runs and {altered_ti_count} task instances "
                 "were set to failed".format(**locals()))
+            self.customized_log_extra.extend([('dag_run', log_drs),
+                                              ('target_state', 'failed'),
+                                              ('ui_action', 'set dag run state')])
         except Exception as ex:
             if not self.handle_view_exception(ex):
                 raise Exception("Ooops")
@@ -2780,7 +2792,7 @@ class DagRunModelView(ModelViewOnly):
                 "{count} dag runs and {altered_ti_count} task instances "
                 "were set to success".format(**locals()))
             self.customized_log_extra.extend([('dag_run', log_drs),
-                                              ('target_state', target_state),
+                                              ('target_state', 'success'),
                                               ('ui_action', 'set dag run state')])
         except Exception as ex:
             if not self.handle_view_exception(ex):
